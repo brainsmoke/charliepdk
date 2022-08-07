@@ -77,12 +77,14 @@ led = {
     (LED6_DIR, 0) : ' ',
 
     (0,0) : 'X'
+
 }
 
-LED_BRIGHTNESS_OFFSET = 0x17
+LED_BRIGHTNESS_OFFSET = 0x10
+LED_BRIGHTNESS_STRIPE = 1
 
 def led_offset(i):
-    return LED_BRIGHTNESS_OFFSET + i*3
+    return LED_BRIGHTNESS_OFFSET + i*LED_BRIGHTNESS_STRIPE
 
 program = []
 
@@ -92,10 +94,10 @@ with open(sys.argv[1]) as f:
 def led_out(ctx):
     pa   = pdk.read_io_raw(ctx, 0x10)
     pac  = pdk.read_io_raw(ctx, 0x11)
-    return led[pac, pa]
+    return led[(pac, pa)]
 
 def led_val(v):
-    return 16*(v&15) + (v//16)
+    return v&255#16*(v&15) + (v//16)
 
 states = [ pdk.new_ctx() for _ in range(256) ]
 for v,ctx in enumerate(states):

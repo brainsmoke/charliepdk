@@ -25,81 +25,53 @@
 # (http://opensource.org/licenses/mit-license.html)
 #
 
+BIT_UART = (1<<3)
+LED_BRIGHTNESS_OFFSET = 0x10
+LED_BRIGHTNESS_STRIPE = 1
+
 import sys
 
 import intelhex, pdk
 
-BIT_UART = (1<<3)
-
-ORANGE = (1<<6)
-BLUE   = (1<<7)
-GREEN  = (1<<0)
-PURPLE = (1<<4)
-
-# clockwise, starting north
-
-LED0_DIR = (ORANGE|BLUE)
-LED1_DIR = (ORANGE|BLUE)
-LED2_DIR = (GREEN|BLUE)
-LED3_DIR = (GREEN|BLUE)
-LED4_DIR = (GREEN|PURPLE)
-LED5_DIR = (GREEN|PURPLE)
-LED6_DIR = (ORANGE|PURPLE)
-LED7_DIR = (ORANGE|PURPLE)
-
-LED0_HIGH = ORANGE
-LED1_HIGH = BLUE
-LED2_HIGH = GREEN
-LED3_HIGH = BLUE
-LED4_HIGH = GREEN
-LED5_HIGH = PURPLE
-LED6_HIGH = ORANGE
-LED7_HIGH = PURPLE
-
-leds = {
-    (LED0_DIR, LED0_HIGH) : 0,
-    (LED1_DIR, LED1_HIGH) : 1,
-    (LED2_DIR, LED2_HIGH) : 2,
-    (LED3_DIR, LED3_HIGH) : 3, 
-    (LED4_DIR, LED4_HIGH) : 4,
-    (LED5_DIR, LED5_HIGH) : 5,
-    (LED6_DIR, LED6_HIGH) : 6,
-    (LED7_DIR, LED7_HIGH) : 7,
-
-    (LED0_DIR, 0) : -1,
-    (LED2_DIR, 0) : -1,
-    (LED4_DIR, 0) : -1,
-    (LED6_DIR, 0) : -1,
-
-    (0,0) : -1
-}
-
 program = []
+t, tlast = 0, 0
+ix = 0
+
+
+
+def get_fb_led(ctx, i):
+    assert 0 <= i < 8
+    return pdk.read_mem(ctx, LED_BRIGHTNESS_OFFSET+LED_BRIGHTNESS_STRIPE*i)
+
+def uart_next(ctx):
+    global ix
+    byte = (ix // 10)%256
+    bit = ix % 10
+    if bit == 0:
+        pdk.set_pin(ctx, 0)
+    elif bit == 9:
+        pdk.set_pin(ctx, BIT_UART)
+    else:
+        pdk.set_pin(ctx, BIT_UART*bool( byte & (1<<(bit-1)) ) )
+
+    ix += 1
 
 with open(sys.argv[1]) as f:
     program = pdk.parse_program(f.read(), arch='pdk14')
 
-def led_out(ctx):
-    pa   = pdk.read_io_raw(ctx, 0x10)
-    pac  = pdk.read_io_raw(ctx, 0x11)
-    return leds[pac, pa]
+last_fb = None
+def cb(program, ctx):
+    global t, tlast, last_fb
+    fb = tuple( get_fb_led(ctx, i) for i in range(8) )
+    if fb != last_fb:
+        print( ' '.join(hex(x) for x in fb) )
+        last_fb = fb
+    t += 1
+    if pdk.ioread(ctx):
+        uart_next(ctx)
+        print (t-tlast, hex(pdk.read_mem(ctx, 0xe)))
+        tlast = t
+    print ("{:6d}".format(t), pdk.prog_state(program, ctx, max_mem=40))
+        
 
-def led_val(v):
-    return 16*(v&15) + (v//16)
-
-ctx = pdk.new_ctx()
-pdk.set_pin(ctx, BIT_UART)
-
-last = -1
-lastcount = 0
-while True:
-    led = led_out(ctx)
-    if led == -1:
-        if last != -1:
-            print ( '  {:02x} {}'.format(lastcount, last), end = '\n'[last!=7:])
-        lastcount = 0
-    else:
-        lastcount += 1
-    last = led
-    pdk.step(program, ctx)
-
+pdk.run( program, pdk.new_ctx(), callback=cb)

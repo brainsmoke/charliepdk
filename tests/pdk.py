@@ -32,19 +32,23 @@ import intelhex
 
 MEM_SIZE = 64
 
+FLAGS         = 0x01
 STACK_POINTER = 0x02
+
+FLAG_Z, FLAG_C, FLAG_AC, FLAG_OV = ( 1<<x for x in range(4) )
 
 MEMMAP       = { x:x for x in range(MEM_SIZE) }
 PC_INDEX     = MEM_SIZE+0
 A_INDEX      = MEM_SIZE+1
 STALL_INDEX  = MEM_SIZE+2
-IOMAP        = { STACK_POINTER: MEM_SIZE+3, 0x10: MEM_SIZE+4, 0x11: MEM_SIZE+5, 0x12: MEM_SIZE+6 }
-IOIGNORE     = (0x03, 0x0B, 0x3B)
 IN_INDEX     = MEM_SIZE+7
 IOREAD_INDEX = MEM_SIZE+8
+FLAGS_INDEX  = MEM_SIZE+9
+IOMAP        = { STACK_POINTER: MEM_SIZE+3, 0x10: MEM_SIZE+4, 0x11: MEM_SIZE+5, 0x12: MEM_SIZE+6, FLAGS: FLAGS_INDEX }
+IOIGNORE     = (0x03, 0x0B, 0x3B)
 
 def new_ctx():
-    return [ 0 ] * 73
+    return [ 0 ] * 73 + ["BAD"]
 
 def copy_ctx(ctx):
     return ctx[:]
@@ -59,6 +63,7 @@ def read_io(ctx, io):
         v &= iomask
         v |=~iomask & ctx[IN_INDEX]
         ctx[IOREAD_INDEX] = 1
+
     return v
 
 def read_io_raw(ctx, io):
@@ -78,7 +83,7 @@ def read_mem16(ctx, mem):
     return ctx[MEMMAP[mem]]+256*ctx[MEMMAP[mem+1]]
 
 def read_flags(ctx):
-    return "BAD"
+    return ctx[FLAGS_INDEX]
 
 def write_a(ctx, a):
     ctx[A_INDEX] = a&0xff
@@ -112,7 +117,7 @@ def next_op(ctx):
         ctx[PC_INDEX] += 1
 
 def write_flags(ctx, flags):
-    pass
+    ctx[FLAGS_INDEX] = flags
 
 def set_pin(ctx, data):
     ctx[IN_INDEX] = data&0xff
@@ -124,25 +129,61 @@ def get_pout(ctx):
 def ioread(ctx):
     return ctx[IOREAD_INDEX] != 0
 
+def do_add(orig, d):
+    flags = 0
+    new = (orig+d)&0xff
+    if new < orig:
+        flags |= FLAG_C
+    if new^0x80 < orig^0x80:
+        flags |= FLAG_OV
+    if new == 0:
+        flags |= FLAG_Z
+    if new&0xf < orig&0xf:
+        flags |= FLAG_AC
+
+    return (new, flags)
+
+def do_sub(orig, d):
+    flags = 0
+    new = (orig-d)&0xff
+    if new > orig:
+        flags |= FLAG_C
+    if new^0x80 > orig^0x80:
+        flags |= FLAG_OV
+    if new == 0:
+        flags |= FLAG_Z
+    if new&0xf > orig&0xf:
+        flags |= FLAG_AC
+
+    return (new, flags)
+
 def un_addc(value, flags):
-    raise AssertionError("unimplemented")
+    if flags & FLAG_C:
+        return ((value+1)&0xff, "BAD", 0)
+    else:
+        return (value, "BAD", 0)
 
 def un_subc(value, flags):
-    raise AssertionError("unimplemented")
+    if flags & FLAG_C:
+        return ((value-1)&0xff, "BAD", 0)
+    else:
+        return (value, "BAD", 0)
 
 def un_izsn(value, flags):
-    ret = (value+1)&0xff
-    return (ret, "BAD", ret == 0)
+    ret, flags = do_add(value, 1)
+    return (ret, flags, ret == 0)
 
 def un_dzsn(value, flags):
-    ret = (value-1)&0xff
-    return ( (value-1)&0xff , "BAD", ret == 0)
+    ret, flags = do_sub(value, 1)
+    return (ret, flags, ret == 0)
 
 def un_inc(value, flags):
-    return ((value+1)&0xff, "BAD", 0)
+    ret, flags = do_add(value, 1)
+    return (ret, flags, 0)
 
 def un_dec(value, flags):
-    return ((value-1)&0xff, "BAD", 0)
+    ret, flags = do_sub(value, 1)
+    return (ret, flags, 0)
 
 def un_clear(value, flags):
     return (0, "BAD", 0)
@@ -169,10 +210,12 @@ def un_swap(value, flags):
     return ( (value>>4) | (value<<4) & 0xff, "BAD", 0)
 
 def alu_add(dst, src, flags):
-    return ( (dst+src)&0xff, "BAD")
+    ret, flags = do_add(dst, src)
+    return (ret, flags)
 
 def alu_sub(dst, src, flags):
-    return ( (dst-src)&0xff, "BAD")
+    ret, flags = do_sub(dst, src)
+    return (ret, flags)
 
 def alu_addc(dst, src, flags):
     raise AssertionError("unimplemented")
@@ -226,7 +269,7 @@ def op_pcadd_a(ctx):
     new_pc = get_pc(ctx)+read_a(ctx)
     if new_pc > 0x3ff:
         raise AssertionError("ub")
-    jump_to(new_pc)
+    jump_to(ctx, new_pc)
 
 def op_wdreset(ctx):
     pass
@@ -332,7 +375,7 @@ def op_test_io_bit_skip(ctx, io, pos, boolean):
         skip_next(ctx)
 
 def op_set_io_bit(ctx, io, pos, boolean):
-    v = read_io(ctx, io)
+    v = read_io_raw(ctx, io)
     if boolean:
         v |= 1<<pos
     else:
@@ -662,10 +705,16 @@ def opcode_str(opcode):
     op, args, num = opcode
     return op_fmt[op].format( **{ k : field_str[k](v) for k,v in args.items() } )
 
+def get_opcode(ctx, program):
+    if stalled(ctx):
+        return '[stall]'
+    else:
+        return opcode_str(program[get_pc(ctx)])
+
 def get_in():
     return 0
 
-def ctx_state(ctx):
+def ctx_state(ctx, max_mem=MEM_SIZE):
 
     pa   = read_io_raw(ctx, 0x10)
     pac  = read_io_raw(ctx, 0x11)
@@ -692,13 +741,13 @@ def ctx_state(ctx):
     #pins = '['+' '.join(pin_chr(x) for x in range(8) )+']\n\n'
 
     pc_a = 'PC: {:4x} A: {:02x} MEM: '.format(get_pc(ctx), read_a(ctx))
-    mem=''.join('{:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}  '.format(*ctx[x:x+8]) for x in range(0, MEM_SIZE, 8) )
+    mem=''.join('{:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}  '.format(*ctx[x:x+8]) for x in range(0, max_mem, 8) )
     pins = '['+' '.join(pin_chr(x) for x in range(8) )+']'
     return pc_a+mem+pins
 
-def prog_state(program, ctx):
-    opstr = opcode_str( program[get_pc(ctx)] )
-    return opstr + ' '*(20-len(opstr)) + ctx_state(ctx)
+def prog_state(program, ctx, max_mem=MEM_SIZE):
+    opstr = get_opcode( ctx, program )
+    return opstr + ' '*(20-len(opstr)) + ctx_state(ctx, max_mem)
 
 def state_to_tuple(ctx):
     return tuple(ctx[:-2])

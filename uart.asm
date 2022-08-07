@@ -1,123 +1,114 @@
+
+; bitfield memory:
+;
+; uart_status
+; uart_shift_reg
+; uart_state
+;
+; any memory:
+;
+; uart_data
+; uart_wait
+; uart_bit
 ;
 
-PIN_UART   = 3
-MASK_UART  = 1<<(PIN_UART)
 
-BAD_DATA = 1
-NEW_DATA = 0
+UART_RX_PIN = 3
+UART_MASK   = 1<<(UART_RX_PIN)
+
+NEW_DATA = 0 ; don't change, maye be used with dzsn etc
+
+UART_IDLE_LEN=6
+UART_START_LEN=4
+UART_SAMPLE_LEN=5
+UART_NEXT_LEN=4
+UART_STOP_LEN=4
+UART_STORE_LEN=5
+
+UART_IDLE=1
+UART_START=UART_IDLE+UART_IDLE_LEN
+UART_SAMPLE=UART_START+UART_START_LEN
+UART_NEXT=UART_SAMPLE+UART_SAMPLE_LEN
+UART_STOP=UART_NEXT+UART_NEXT_LEN
+UART_STORE=UART_STOP+UART_STOP_LEN
+UART_WAIT=UART_STORE+UART_STORE_LEN
 
 .macro uart_init
-	mov a, #MASK_UART
+	mov a, #(UART_MASK)
 	mov paph, a
-	clear wait_count
-	clear bit_count
-	clear data
-	clear data_flag
-	clear new_data
+	clear uart_status
+	mov a, #UART_IDLE
+	mov uart_state, a
 .endm
 
-;
-; UART STATE MACHINE
-;
-; .__________________. <-----------------------------------.
-; |                  | <-.                                 |
-; |    uart idle     |   | no start bit                    |
-; |_________.________|---'                                 |
-;           |                                              |
-;           | wait_count = 33                              |
-; ._________V________. <-------------------------------.   |
-; |                  | <-.                             |   |
-; |  uart countdown  |   | 1.) while ( --wait_count )  |   |
-; |___.______________|---'                             |   |
-;     |             `-----------------------.          |   |
-;  2. | while (--bit_count)        3.) else |          |   |
-; .___V______________.                      |          |   |
-; |                  |                      |          |   |
-; |   uart sample    | wait_count = 22      |          |   |
-; |__________________|----------------------|----------'   |
-;                                  .________V_________.    |
-;                               .->|                  |    |
-;                      bad bit  |  |  uart stop bit   |    |
-;                               '--|__________________|    |
-;                                           |              |
-;                                  .________V_________.    |
-;                                  |                  |    |
-;                                  |    uart read     |----'
-;                                  |__________________|    
-;
-; prereq: wait_count = 0 ; bit_count = 0
-;
+;                                        .----------.   .--------.
+;  .___.                     .---. .---->|  SAMPLE  |-->|  NEXT  |
+;  v   |                     v   | |     '----------'   '--------'
+; .--------.  .---------.  .--------.                       |
+; |  IDLE  |->|  START  |->|  WAIT  |<----------------------'
+; '--------'  '---------'  '--------'            (good)
+;    ^                             |     .--------.   .---------.
+;    |                             '---->|  STOP  |-->|  STORE  |
+;    |--------------<-bad-<--------------'--------'   '---------'
+;    |____________________________________________________|
 
-.macro uart_idle out_idle, out_countdown, ?l1, ?l2
-	t0sn pa, #PIN_UART      ; 0 + 1
-	goto l1                 ; 1 + 1 | 2 --.
-	mov a, #18              ; 2 + 1       |
-	mov wait_count, a       ; 3 + 1       |  [ wait_count = 17 ]
-	mov a, #9               ; 4 + 1       |
-	mov bit_count, a        ; 5 + 1       |  [ bit_count = 9 ]
-	goto out_countdown      ; 6 + 2 = 8   |
-l1:	goto l2                 ; 3 + 2     <-'
-l2:	nop                     ; 5 + 1
-	goto out_idle           ; 6 + 2 = 8
+
+.macro uart ?out, ?write_state_in_2, ?write_state_in_1
+
+;switch( uart_state )
+	mov a, uart_state        ; 0 + 1
+	pcadd a                  ; 1 + 2
+
+;case UART_IDLE:
+	mov a, #UART_START       ; 3 + 1
+	t1sn pa, #UART_RX_PIN    ; 4 + 1
+	mov uart_state, a        ; 5 + 1
+	mov a, #(17+8*11)        ; 6 + 1
+	mov uart_bit, a          ; 7 + 1
+	goto out                 ; 8 + 2
+
+;case UART_START:
+	mov a, #17               ; 3 + 1
+	mov uart_wait, a         ; 4 + 1
+	mov a, #UART_WAIT        ; 5 + 1
+	goto write_state_in_2    ; 6 + 2
+
+;case UART_SAMPLE:
+	sr uart_shift_reg        ; 3 + 1
+	t0sn pa, #UART_RX_PIN    ; 4 + 1
+	set1 uart_shift_reg, #7  ; 5 + 1
+	mov a, #UART_NEXT        ; 6 + 1
+	goto write_state_in_1    ; 7 + 2
+
+;case UART_NEXT:
+	mov a, #11               ; 3 + 1
+	mov uart_wait, a         ; 4 + 1
+	mov a, #UART_WAIT        ; 5 + 1
+	goto write_state_in_2    ; 6 + 2
+
+;case UART_STOP:
+	mov a, #UART_STORE       ; 3 + 1
+	t1sn pa, #UART_RX_PIN    ; 4 + 1
+	mov a, #UART_IDLE        ; 5 + 1
+	goto write_state_in_2    ; 6 + 2
+
+;case UART_STORE:
+	set1 uart_status, #NEW_DATA ; 3 + 1
+	mov a, uart_shift_reg       ; 4 + 1
+	mov uart_data, a            ; 5 + 1
+ 	mov a, #UART_IDLE           ; 6 + 1
+	goto write_state_in_1       ; 7 + 2
+
+;case UART_WAIT:
+	mov a, #UART_STOP               ; 3 + 1
+	dzsn uart_wait                  ; 4 + 1
+	add a, #(UART_WAIT-UART_SAMPLE) ; 7 + 1
+	dzsn uart_bit                   ; 6 + 1
+	sub a, #(UART_STOP-UART_SAMPLE) ; 7 + 1
+write_state_in_2:
+	nop                      ; 8 + 1
+write_state_in_1:
+	mov uart_state, a        ; 9 + 1
+out:
 .endm
-
-.macro uart_countdown out_countdown, out_sample, out_stop_bit, ?l1, ?l2, ?l3, ?l4
-	dzsn wait_count         ; 0 + 1
-	goto l1                 ; 1 + 1 | 2   --.
-	dzsn bit_count          ; 2 + 1         |
-	goto l2                 ; 3 + 1 | 2     |
-	goto l3                 ; 4 + 2         |
-l3:	goto out_stop_bit       ; 6 + 2 = 8     |
-l2:	sr data                 ; 5 + 1         | [ save cycle in uart_sample :-) ]
-	goto out_sample         ; 6 + 2 = 8     |
-l1:	goto l4                 ; 3 + 2       <-'
-l4:	nop                     ; 5 + 1
-	goto out_countdown      ; 6 + 2 = 8
-.endm
-
-.macro uart_sample out_countdown
-;	[ sr data ] in uart_countdown
-	t0sn pa, #PIN_UART      ; 0 + 1
-	set1 data, #7           ; 1 + 1
-	clear data_flag         ; 2 + 1 [ idempotent operation, just needs to be cleared at stop_bit ]
-	mov a, #12              ; 3 + 1
-	mov wait_count, a       ; 4 + 1      [ wait_count = 12 ]
-	nop                     ; 5 + 1
-	goto out_countdown      ; 6 + 2 = 8
-.endm
-
-.macro uart_stop_bit out_store, out_bad, ?l0, ?l1
-	t1sn pa, #PIN_UART         ; 0 + 1
-	goto l0                    ; 1 + 1 | 2 --. [ stop bit needs to be high ]
-	t1sn data_flag, #BAD_DATA  ; 2 + 1       |
-	wdreset                    ; 3 + 1       |
-	mov a, #128                ; 4 + 1       |
-	mov read_timeout, a        ; 5 + 1       |
-	goto out_store             ; 6 + 2 = 8   |
-l0: set1 data_flag, #BAD_DATA  ; 3 + 1  <----'
-	goto l1                    ; 4 + 2
-l1:	goto out_bad               ; 6 + 2 = 8
-.endm
-
-.macro uart_store out_idle
-	mov a, data                ; 0 + 1
-	swap a                     ; 1 + 1
-	mov new_data, a            ; 2 + 1
-	t1sn data_flag, #BAD_DATA  ; 3 + 1
-	set1 data_flag, #NEW_DATA  ; 4 + 1
-	clear data                 ; 5 + 1
-	goto out_idle              ; 6 + 2
-.endm
-
-
-.macro uart_no_store out_idle
-	nop                     ; 0 + 1
-	nop                     ; 1 + 1
-	nop                     ; 2 + 1
-	nop                     ; 3 + 1
-	nop                     ; 4 + 1
-	clear data              ; 5 + 1
-	goto out_idle           ; 6 + 2
-.endm
-
 

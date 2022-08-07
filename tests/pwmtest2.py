@@ -56,23 +56,35 @@ LED5_HIGH = PURPLE
 LED6_HIGH = ORANGE
 LED7_HIGH = PURPLE
 
-leds = {
-    (LED0_DIR, LED0_HIGH) : 0,
-    (LED1_DIR, LED1_HIGH) : 1,
-    (LED2_DIR, LED2_HIGH) : 2,
-    (LED3_DIR, LED3_HIGH) : 3, 
-    (LED4_DIR, LED4_HIGH) : 4,
-    (LED5_DIR, LED5_HIGH) : 5,
-    (LED6_DIR, LED6_HIGH) : 6,
-    (LED7_DIR, LED7_HIGH) : 7,
+led = {
+    (LED0_DIR, LED0_HIGH) : '0',
+    (LED1_DIR, LED1_HIGH) : '1',
+    (LED2_DIR, LED2_HIGH) : '2',
+    (LED3_DIR, LED3_HIGH) : '3', 
+    (LED4_DIR, LED4_HIGH) : '4',
+    (LED5_DIR, LED5_HIGH) : '5',
+    (LED6_DIR, LED6_HIGH) : '6',
+    (LED7_DIR, LED7_HIGH) : '7',
+#
+#    (LED0_DIR, 0) : 'A',
+#    (LED2_DIR, 0) : 'B',
+#    (LED4_DIR, 0) : 'C',
+#    (LED6_DIR, 0) : 'D',
+#
+    (LED0_DIR, 0) : ' ',
+    (LED2_DIR, 0) : ' ',
+    (LED4_DIR, 0) : ' ',
+    (LED6_DIR, 0) : ' ',
 
-    (LED0_DIR, 0) : -1,
-    (LED2_DIR, 0) : -1,
-    (LED4_DIR, 0) : -1,
-    (LED6_DIR, 0) : -1,
+    (0,0) : 'X'
 
-    (0,0) : -1
 }
+
+LED_BRIGHTNESS_OFFSET = 0x10
+LED_BRIGHTNESS_STRIPE = 1
+
+def led_offset(i):
+    return LED_BRIGHTNESS_OFFSET + i*LED_BRIGHTNESS_STRIPE
 
 program = []
 
@@ -82,24 +94,19 @@ with open(sys.argv[1]) as f:
 def led_out(ctx):
     pa   = pdk.read_io_raw(ctx, 0x10)
     pac  = pdk.read_io_raw(ctx, 0x11)
-    return leds[pac, pa]
+    return led[(pac, pa)]
 
 def led_val(v):
-    return 16*(v&15) + (v//16)
+    return v&255#16*(v&15) + (v//16)
 
-ctx = pdk.new_ctx()
-pdk.set_pin(ctx, BIT_UART)
+states = [ pdk.new_ctx() for _ in range(256) ]
+for v,ctx in enumerate(states):
+    pdk.set_pin(ctx, BIT_UART)
+    for i in range(8):
+        pdk.write_mem(ctx, led_offset(i), led_val(v&0xf0 | i))
 
-last = -1
-lastcount = 0
 while True:
-    led = led_out(ctx)
-    if led == -1:
-        if last != -1:
-            print ( '  {:02x} {}'.format(lastcount, last), end = '\n'[last!=7:])
-        lastcount = 0
-    else:
-        lastcount += 1
-    last = led
-    pdk.step(program, ctx)
+    print( ''.join(led_out(ctx) for ctx in states) )
+    for ctx in states:
+        pdk.step(program, ctx)
 

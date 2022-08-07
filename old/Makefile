@@ -1,7 +1,7 @@
 
-TARGETS=charliepdk-pdk14.ihx uartonly-pdk14.ihx finepwm-pdk14.ihx charliepdk-pdk13.ihx
+TARGETS=charliepdk-pdk14.ihx nostore-pdk14.ihx
 CLEAN=$(TARGETS)
-DEPS=animation.asm charlie.asm map.asm pdk.asm uart.asm memmap.asm
+DEPS=animation.asm charlie.asm map.asm pdk.asm pwm.asm uart.asm
 
 AS13=sdaspdk13
 AS14=sdaspdk14

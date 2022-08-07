@@ -26,7 +26,8 @@
 #
 
 BIT_UART = (1<<3)
-LED_BRIGHTNESS_OFFSET = 0x17
+LED_BRIGHTNESS_OFFSET = 0x10
+LED_BRIGHTNESS_STRIPE = 1
 
 import sys
 
@@ -40,7 +41,7 @@ ix = 0
 
 def get_fb_led(ctx, i):
     assert 0 <= i < 8
-    return pdk.read_mem(ctx, LED_BRIGHTNESS_OFFSET+3*i)
+    return pdk.read_mem(ctx, LED_BRIGHTNESS_OFFSET+LED_BRIGHTNESS_STRIPE*i)
 
 def uart_next(ctx):
     global ix
@@ -60,10 +61,10 @@ with open(sys.argv[1]) as f:
 
 last_fb = None
 def cb(program, ctx):
+    #print (pdk.prog_state(program, ctx, max_mem=32))
     global t, tlast, last_fb
     fb = tuple( get_fb_led(ctx, i) for i in range(8) )
     if fb != last_fb:
-#        print (pdk.ctx_state(ctx))
         print( ' '.join(hex(x) for x in fb) )
         last_fb = fb
     t += 1

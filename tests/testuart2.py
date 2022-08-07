@@ -26,7 +26,8 @@
 #
 
 BIT_UART = (1<<3)
-LED_BRIGHTNESS_OFFSET = 0x17
+LED_BRIGHTNESS_OFFSET = 0x10
+LED_BRIGHTNESS_STRIPE = 1
 
 import sys
 
@@ -41,10 +42,10 @@ ix = 0
 
 def get_fb_led(ctx, i):
     assert 0 <= i < 8
-    return pdk.read_mem(ctx, LED_BRIGHTNESS_OFFSET+3*i)
+    return pdk.read_mem(ctx, LED_BRIGHTNESS_OFFSET+LED_BRIGHTNESS_STRIPE*i)
 
 def get_j(ctx):
-    return pdk.read_mem(ctx, 2)
+    return pdk.read_mem(ctx, 0)
 
 def uart_next(ctx):
     global ix
