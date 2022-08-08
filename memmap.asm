@@ -29,8 +29,6 @@ brightness_lo:      .ds 1
 brightness_hi:      .ds 1
 new_brightness_hi:  .ds 1
 cycle_count:        .ds 1
-slowdown:           .ds 1
-state:              .ds 1
 
 .org 0x10
 
@@ -46,6 +44,9 @@ p:                  .ds 1
 p_hi:               .ds 1
 
 ; other regs
+
+slowdown:           .ds 1
+state:              .ds 1
 
 
 
