@@ -30,13 +30,13 @@ brightness_hi:      .ds 1
 new_brightness_hi:  .ds 1
 cycle_count:        .ds 1
 
-.org 0x10
 
 ; 0x10 aligned
+.bndry 0x10
 buffer: .ds 8
 
 ; short aligned
-
+.bndry 2
 i:                  .ds 1
 i_hi:               .ds 1
 
